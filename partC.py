@@ -6,10 +6,9 @@ import pandas as pd
 import csv
 import torch
 import seaborn as sns
-from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import BertForSequenceClassification, AdamW
-from transformers import BertModel, BertTokenizer, BertConfig
+from transformers import  BertTokenizer
 from transformers import get_linear_schedule_with_warmup
 from keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
@@ -22,11 +21,6 @@ import random
 import pprint
 import datetime
 import matplotlib.pyplot as plt
-
-MAX_LEN = 264
-batch_size = 32
-epochs = 4
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def plot(loss_values):
@@ -57,16 +51,16 @@ def flat_accuracy(preds, labs):
     return np.sum(pred_flat == labels_flat) / len(labels_flat)
 
 
-def encode_vector(original_input, token) -> list:
+def encode_vector(original_input, tokens) -> list:
     encoded = []
-    for tweet in original_input:
+    for phrase in original_input:
         # `encode` will:
         #   (1) Tokenize the sentence.
         #   (2) Prepend the `[CLS]` token to the start.
         #   (3) Append the `[SEP]` token to the end.
         #   (4) Map tokens to their IDs.
-        encoded_sent = token.encode(
-            tweet,  # Sentence to encode.
+        encoded_sent = tokens.encode(
+            phrase,  # Sentence to encode.
             add_special_tokens=True,  # Add '[CLS]' and '[SEP]'
         )
         encoded.append(encoded_sent)
@@ -136,7 +130,7 @@ def validation(nn, validation_dataloader, dev):
 
 
 
-def training(nn, train_dataloader, validation_dataloader, learn_rate, dev="cuda") -> Tuple[Any, list]:
+def training(nn, train_dataloader, validation_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[Any, list]:
     loss_values = []
     seed_val = 42
     random.seed(seed_val)
@@ -145,8 +139,8 @@ def training(nn, train_dataloader, validation_dataloader, learn_rate, dev="cuda"
     torch.cuda.manual_seed_all(seed_val)
 
     optimizer = AdamW(nn.parameters(),
-                      lr=2e-5,  # args.learning_rate - default is 5e-5, our notebook had 2e-5
-                      eps=1e-8  # args.adam_epsilon  - default is 1e-8.
+                      lr=learn_rate,  # args.learning_rate - default is 5e-5, our notebook had 2e-5
+                      eps=eps  # args.adam_epsilon  - default is 1e-8.
                       )
     # Create the learning rate scheduler.
     scheduler = get_linear_schedule_with_warmup(optimizer,
@@ -197,7 +191,7 @@ def training(nn, train_dataloader, validation_dataloader, learn_rate, dev="cuda"
     return nn, loss_values
 
 
-def testing(prediction_dataloader, dev="cuda"):
+def model_testing(prediction_dataloader, dev="cuda"):
     model.eval()
     predictions, true_labels = [], []
 
@@ -207,7 +201,8 @@ def testing(prediction_dataloader, dev="cuda"):
 
         with torch.no_grad():
             # Forward pass, calculate logit predictions
-            outputs = model(b_input_ids, token_type_ids=None,
+            outputs = model(b_input_ids,
+                            token_type_ids=None,
                             attention_mask=b_input_mask)
 
         logits = outputs[0]
@@ -249,9 +244,9 @@ def metrics(pred_flat, labels_flat):
     return np.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
 
 
-def test_performance(test_tweets, test_labels):
+def model_test_performance(test_tweets, test_labels, tokens):
     batch = 32
-    test_vector = encode_vector(test_tweets, tokenizer)
+    test_vector = encode_vector(test_tweets, tokens)
     test_vector = pad_sequences(test_vector, maxlen=MAX_LEN, dtype="long",
                                 value=0, truncating="post", padding="post")
 
@@ -265,7 +260,7 @@ def test_performance(test_tweets, test_labels):
     prediction_sampler = SequentialSampler(prediction_data)
     prediction_dataloader = DataLoader(prediction_data, sampler=prediction_sampler, batch_size=batch)
     print("Starting testing")
-    return testing(prediction_dataloader)
+    return model_testing(prediction_dataloader)
 
 
 def save_model(mod, name):
@@ -277,35 +272,41 @@ def save_model(mod, name):
 
     print("Saving model to %s" % output_dir)
 
-    # Save a trained model, configuration and tokenizer using `save_pretrained()`.
     # They can then be reloaded using `from_pretrained()`
     model_to_save = mod.module if hasattr(mod, 'module') else mod  # Take care of distributed/parallel training
     model_to_save.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
 
 if __name__ == "__main__":
-    training_phase = None
-    untrained_bert = False
+    training_phase = False
+    MAX_LEN = 264
+    batch_size = 32
+    epochs = 4
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    num_labels = 5
+    training_dataset = ""
+    testing_dataset = ""
 
     if training_phase is True:
         learning_rates = [1e-3, 5e-4, 1e-4, 5e-5, 3e-5, 2e-5]
         f1_scores = {}
         for learn in learning_rates:
             print(f"Starting training with learning rate {learn}")
-            tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+            token = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
             model = BertForSequenceClassification.from_pretrained(
                 "bert-base-uncased",  # Use the 12-layer BERT model, with an uncased vocab.
-                num_labels=4,  # The number of output labels--4 for multi-class classification.
+                num_labels=num_labels,  # The number of output labels--4 for multi-class classification.
                 output_attentions=False,  # Whether the model returns attentions weights.
                 output_hidden_states=False,  # Whether the model returns all hidden-states.
             )
-            model.cuda()
+            if device == "cuda":
+                model.cuda()
 
-            df = pd.read_csv('datasets/train/SemEval2018-T3-train-taskB.txt', delimiter="\t", quoting=csv.QUOTE_NONE)
+            df = pd.read_csv(training_dataset, delimiter="\t", quoting=csv.QUOTE_NONE)
             tweets = df["Tweet text"].values
             labels = df["Label"].values
 
-            input_ids = encode_vector(tweets, tokenizer)
+            input_ids = encode_vector(tweets, token)
             input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long",
                                       value=0, truncating="post", padding="post")
 
@@ -313,7 +314,7 @@ if __name__ == "__main__":
             train_dataset, validation_dataset = prepare_dataset(input_ids, labels, attention_masks)
             total_steps = len(train_dataset) * epochs
 
-            model, losses = training(model, train_dataset, validation_dataset, learn, device)
+            model, losses = training(model, train_dataset, validation_dataset, learn, dev=device)
             save_model(model, str(learn))
             plot(losses)
 
@@ -328,102 +329,102 @@ if __name__ == "__main__":
             print("Model loaded")
             # Copy the model to the GPU.
             model.to(device)
-            f1_scores[learn] = test_performance(tweets, labels)
+            f1_scores[learn] = model_test_performance(tweets, labels, tokenizer)
 
-    elif training_phase is False:
-        test = pd.read_csv("datasets/goldtest_TaskB/SemEval2018-T3_gold_test_taskB_emoji.txt", delimiter="\t", quoting=csv.QUOTE_NONE)
-        tweets = test["Tweet text"].values
-        labels = test["Label"].values
 
-        # Load a trained model and vocabulary that you have fine-tuned
-        model = BertForSequenceClassification.from_pretrained("model/")
-        tokenizer = BertTokenizer.from_pretrained("model/")
-        print("Model loaded")
-        # Copy the model to the GPU.
-        model.to(device)
-        test_performance(tweets, labels)
+    test = pd.read_csv(testing_dataset, delimiter="\t", quoting=csv.QUOTE_NONE)
+    tweets = test["Tweet text"].values
+    labels = test["Label"].values
 
-    else:
-        print("Checking similarities")
-        if untrained_bert is True:
-            MODEL_NAME = 'bert-base-uncased'
-            # Use the bert tokenizer\n",
+    # Load a trained model and vocabulary that you have fine-tuned
+    model = BertForSequenceClassification.from_pretrained("model/")
+    tokenizer_test = BertTokenizer.from_pretrained("model/")
+    print("Model loaded")
+    # Copy the model to the GPU.
+    model.to(device)
+    model_test_performance(tweets, labels, tokenizer_test)
 
-        else:
-            MODEL_NAME = "model/"
-
-        config = BertConfig.from_pretrained(MODEL_NAME, output_hidden_states=True)
-        model = BertModel.from_pretrained(MODEL_NAME, config=config)
-        tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
-        test = pd.read_csv("datasets/goldtest_TaskB/SemEval2018-T3_gold_test_taskB_emoji.txt", delimiter="\t",
-                           quoting=csv.QUOTE_NONE)
-        tweets = test["Tweet text"].values
-        labels = test["Label"].values
-        sentence_vectors = []
-
-        for index in range(20):
-            print(f"Tweet nr. {index+1}: {tweets[index]}. Label: {labels[index]}")
-
-            tweet = tweets[index]
-            tokens = [tokenizer.cls_token] + tokenizer.tokenize(tweet) + [tokenizer.sep_token]
-            token_ids = tokenizer.convert_tokens_to_ids(tokens)
-            tokens_tensor = torch.tensor(token_ids).unsqueeze(0)
-            model.eval()  # turn off dropout layers
-            output = model(tokens_tensor)
-            layers = output.hidden_states
-            layer = 12
-            sentence_vector = layers[layer][0].detach().numpy()
-            sentence_vectors.append(sentence_vector[0])
-
-        similarity_matrix = cosine_similarity(np.asarray(sentence_vectors))
-        max_3 = []
-        max_3_id = []
-        min_3 = []
-        min_3_id = []
-        for index in range(len(similarity_matrix)):
-            for index2 in range(len(similarity_matrix[index])):
-                if index == index2:
-                    continue
-                current_tweet = similarity_matrix[index][index2]
-                if len(max_3) < 3:
-                    max_3.append(current_tweet)
-                    min_3.append(current_tweet)
-                    max_3_id.append((index+1, index2+1))
-                    min_3_id.append((index+1, index2+1))
-                    continue
-
-                if any(current_tweet > elem for elem in max_3) and (index2+1, index+1) not in max_3_id:
-                    lowest_elem = min(max_3)
-                    lowest_elem_index = max_3.index(lowest_elem)
-                    max_3.pop(lowest_elem_index)
-                    max_3.append(current_tweet)
-                    max_3_id.pop(lowest_elem_index)
-                    max_3_id.append((index+1, index2+1))
-
-                if any(current_tweet  < elem for elem in min_3) and (index2+1, index+1) not in min_3_id:
-                    highest_elem = max(min_3)
-                    highest_elem_index = min_3.index(highest_elem)
-                    min_3.pop(highest_elem_index)
-                    min_3.append(current_tweet)
-                    min_3_id.pop(highest_elem_index)
-                    min_3_id.append((index+1, index2+1))
-
-        max_3_id = max_3_id[-3:]
-        min_3_id = min_3_id[-3:]
-        print(similarity_matrix)
-        print(f"HIGHEST SIMILARITIES: {max_3}")
-        print(f"Coordinates: {max_3_id}")
-
-        print(f"LOWEST SIMILARITIES: {min_3}")
-        print(f"Coordinates: {min_3_id}")
-        # Plot a heatmap
-        ax = sns.heatmap(similarity_matrix, linewidth=0.5, cmap="YlGnBu")
-        ids = list(range(1, 20 + 1))
-        ax.set_xticklabels(ids)
-        ax.set_yticklabels(ids)
-
-        # Remove the ticks, but keep the labels
-        ax.tick_params(top=False, bottom=False, left=False, right=False, labelleft=True, labeltop=True,
-                       labelbottom=False)
-        ax.set_title("Similarity between sentence pairs")
-        plt.show()
+    # else:
+    #     print("Checking similarities")
+    #     if untrained_bert is True:
+    #         MODEL_NAME = 'bert-base-uncased'
+    #         # Use the bert tokenizer\n",
+    #
+    #     else:
+    #         MODEL_NAME = "model/"
+    #
+    #     config = BertConfig.from_pretrained(MODEL_NAME, output_hidden_states=True)
+    #     model = BertModel.from_pretrained(MODEL_NAME, config=config)
+    #     tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
+    #     test = pd.read_csv("datasets/goldtest_TaskB/SemEval2018-T3_gold_test_taskB_emoji.txt", delimiter="\t",
+    #                        quoting=csv.QUOTE_NONE)
+    #     tweets = test["Tweet text"].values
+    #     labels = test["Label"].values
+    #     sentence_vectors = []
+    #
+    #     for index in range(20):
+    #         print(f"Tweet nr. {index+1}: {tweets[index]}. Label: {labels[index]}")
+    #
+    #         tweet = tweets[index]
+    #         tokens = [tokenizer.cls_token] + tokenizer.tokenize(tweet) + [tokenizer.sep_token]
+    #         token_ids = tokenizer.convert_tokens_to_ids(tokens)
+    #         tokens_tensor = torch.tensor(token_ids).unsqueeze(0)
+    #         model.eval()  # turn off dropout layers
+    #         output = model(tokens_tensor)
+    #         layers = output.hidden_states
+    #         layer = 12
+    #         sentence_vector = layers[layer][0].detach().numpy()
+    #         sentence_vectors.append(sentence_vector[0])
+    #
+    #     similarity_matrix = cosine_similarity(np.asarray(sentence_vectors))
+    #     max_3 = []
+    #     max_3_id = []
+    #     min_3 = []
+    #     min_3_id = []
+    #     for index in range(len(similarity_matrix)):
+    #         for index2 in range(len(similarity_matrix[index])):
+    #             if index == index2:
+    #                 continue
+    #             current_tweet = similarity_matrix[index][index2]
+    #             if len(max_3) < 3:
+    #                 max_3.append(current_tweet)
+    #                 min_3.append(current_tweet)
+    #                 max_3_id.append((index+1, index2+1))
+    #                 min_3_id.append((index+1, index2+1))
+    #                 continue
+    #
+    #             if any(current_tweet > elem for elem in max_3) and (index2+1, index+1) not in max_3_id:
+    #                 lowest_elem = min(max_3)
+    #                 lowest_elem_index = max_3.index(lowest_elem)
+    #                 max_3.pop(lowest_elem_index)
+    #                 max_3.append(current_tweet)
+    #                 max_3_id.pop(lowest_elem_index)
+    #                 max_3_id.append((index+1, index2+1))
+    #
+    #             if any(current_tweet  < elem for elem in min_3) and (index2+1, index+1) not in min_3_id:
+    #                 highest_elem = max(min_3)
+    #                 highest_elem_index = min_3.index(highest_elem)
+    #                 min_3.pop(highest_elem_index)
+    #                 min_3.append(current_tweet)
+    #                 min_3_id.pop(highest_elem_index)
+    #                 min_3_id.append((index+1, index2+1))
+    #
+    #     max_3_id = max_3_id[-3:]
+    #     min_3_id = min_3_id[-3:]
+    #     print(similarity_matrix)
+    #     print(f"HIGHEST SIMILARITIES: {max_3}")
+    #     print(f"Coordinates: {max_3_id}")
+    #
+    #     print(f"LOWEST SIMILARITIES: {min_3}")
+    #     print(f"Coordinates: {min_3_id}")
+    #     # Plot a heatmap
+    #     ax = sns.heatmap(similarity_matrix, linewidth=0.5, cmap="YlGnBu")
+    #     ids = list(range(1, 20 + 1))
+    #     ax.set_xticklabels(ids)
+    #     ax.set_yticklabels(ids)
+    #
+    #     # Remove the ticks, but keep the labels
+    #     ax.tick_params(top=False, bottom=False, left=False, right=False, labelleft=True, labeltop=True,
+    #                    labelbottom=False)
+    #     ax.set_title("Similarity between sentence pairs")
+    #     plt.show()
