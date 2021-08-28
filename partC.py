@@ -1,11 +1,9 @@
-from typing import Tuple, Any
+from typing import Tuple, Any, List
 import os
 
 import numpy
 import pandas as pd
-import csv
 import torch
-import seaborn as sns
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import BertForSequenceClassification, AdamW
 from transformers import  BertTokenizer
@@ -14,34 +12,43 @@ from keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
+import simplemma
+import nltk
 import numpy as np
 import time
 import json
 import random
 import pprint
-import datetime
-import matplotlib.pyplot as plt
 
 
-def plot(loss_values):
-    sns.set(style='darkgrid')
-    sns.set(font_scale=1.5)
-    plt.rcParams["figure.figsize"] = (12, 6)
-
-    plt.plot(loss_values, 'b-o')
-
-    plt.title("Training loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.show()
+ITALIAN_STOPWORDS = ['ad', 'al', 'allo', 'ai', 'agli', 'all', 'agl', 'alla', 'alle', 'con', 'col', 'coi', 'da', 'dal', 'dallo', 'dai', 'dagli', 'dall', 'dagl', 'dalla', 'dalle', 'di', 'del', 'dello', 'dei', 'degli', 'dell', 'degl', 'della', 'delle', 'in', 'nel', 'nello', 'nei', 'negli', 'nell', 'negl', 'nella', 'nelle', 'su', 'sul', 'sullo', 'sui', 'sugli', 'sull', 'sugl', 'sulla', 'sulle', 'per', 'tra', 'contro', 'io', 'tu', 'lui', 'lei', 'noi', 'voi', 'loro', 'mio', 'mia', 'miei', 'mie', 'tuo', 'tua', 'tuoi', 'tue', 'suo', 'sua', 'suoi', 'sue', 'nostro', 'nostra', 'nostri', 'nostre', 'vostro', 'vostra', 'vostri', 'vostre', 'mi', 'ti', 'ci', 'vi', 'lo', 'la', 'li', 'le', 'gli', 'ne', 'il', 'un', 'uno', 'una', 'ma', 'ed', 'se', 'perché', 'anche', 'come', 'dov', 'dove', 'che', 'chi', 'cui', 'non', 'più', 'quale', 'quanto', 'quanti', 'quanta', 'quante', 'quello', 'quelli', 'quella', 'quelle', 'questo', 'questi', 'questa', 'queste', 'si', 'tutto', 'tutti', 'a', 'c', 'e', 'i', 'l', 'o', 'ho', 'hai', 'ha', 'abbiamo', 'avete', 'hanno', 'abbia', 'abbiate', 'abbiano', 'avrò', 'avrai', 'avrà', 'avremo', 'avrete', 'avranno', 'avrei', 'avresti', 'avrebbe', 'avremmo', 'avreste', 'avrebbero', 'avevo', 'avevi', 'aveva', 'avevamo', 'avevate', 'avevano', 'ebbi', 'avesti', 'ebbe', 'avemmo', 'aveste', 'ebbero', 'avessi', 'avesse', 'avessimo', 'avessero', 'avendo', 'avuto', 'avuta', 'avuti', 'avute', 'sono', 'sei', 'è', 'siamo', 'siete', 'sia', 'siate', 'siano', 'sarò', 'sarai', 'sarà', 'saremo', 'sarete', 'saranno', 'sarei', 'saresti', 'sarebbe', 'saremmo', 'sareste', 'sarebbero', 'ero', 'eri', 'era', 'eravamo', 'eravate', 'erano', 'fui', 'fosti', 'fu', 'fummo', 'foste', 'furono', 'fossi', 'fosse', 'fossimo', 'fossero', 'essendo', 'faccio', 'fai', 'facciamo', 'fanno', 'faccia', 'facciate', 'facciano', 'farò', 'farai', 'farà', 'faremo', 'farete', 'faranno', 'farei', 'faresti', 'farebbe', 'faremmo', 'fareste', 'farebbero', 'facevo', 'facevi', 'faceva', 'facevamo', 'facevate', 'facevano', 'feci', 'facesti', 'fece', 'facemmo', 'faceste', 'fecero', 'facessi', 'facesse', 'facessimo', 'facessero', 'facendo', 'sto', 'stai', 'sta', 'stiamo', 'stanno', 'stia', 'stiate', 'stiano', 'starò', 'starai', 'starà', 'staremo', 'starete', 'staranno', 'starei', 'staresti', 'starebbe', 'staremmo', 'stareste', 'starebbero', 'stavo', 'stavi', 'stava', 'stavamo', 'stavate', 'stavano', 'stetti', 'stesti', 'stette', 'stemmo', 'steste', 'stettero', 'stessi', 'stesse', 'stessimo', 'stessero', 'stando']
 
 
-def format_time(elapsed):
-    """
-    Takes a time in seconds and returns a string hh:mm:ss
-    """
-    elapsed_rounded = int(round(elapsed))
-    return str(datetime.timedelta(seconds=elapsed_rounded))
+def metrics(pred_flat, labels_flat):
+    """Function to various metrics of our predictions vs labels"""
+    print(json.dumps(classification_report(labels_flat, pred_flat, output_dict=True)))
+    print("\n**** Classification report")
+    print(classification_report(labels_flat, pred_flat))
+    macro_average_accuracy = 0
+    weighted_average_accuracy = 0
+
+    for i in range(4):
+        correct_sum = 0
+        for elem1, elem2 in zip(pred_flat, labels_flat):
+            if elem1 == elem2 and elem1 == i:
+                correct_sum += 1
+
+        class_accuracy = correct_sum / len(labels_flat)
+        weighted_average_accuracy += class_accuracy * (np.sum(labels_flat == i) / len(labels_flat))
+        macro_average_accuracy += class_accuracy * 0.25
+
+        print(f"Accuracy class {i}: {class_accuracy}")
+    print(f"Macro Average accuracy class: {macro_average_accuracy}")
+    print(f"Weighted Average accuracy class: {weighted_average_accuracy}")
+    print("\n***Confusion matrix")
+    pprint.pprint(confusion_matrix(pred_flat, labels_flat))
+
+    return np.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
 
 
 def flat_accuracy(preds, labs):
@@ -49,6 +56,36 @@ def flat_accuracy(preds, labs):
     pred_flat = np.argmax(preds, axis=1).flatten()
     labels_flat = labs.flatten()
     return np.sum(pred_flat == labels_flat) / len(labels_flat)
+
+
+def clean_texts(texts: List[str]) -> None:
+    for idx in range(len(texts)):
+        texts[idx] = clean_text(texts[idx])
+
+
+def clean_text(text: str) -> str:
+    stemmer = nltk.snowball.ItalianStemmer()
+    text = text.lower()
+    text = remove_stop_words(text)
+    text = lemmetize_text(text)
+    text = stem_text(text, stemmer)
+    return text
+
+
+def lemmetize_text(text: str) -> str:
+    new_text = []
+    lemmatizer = simplemma.load_data("it")
+    for word in text.split(" "):
+        new_text.append(simplemma.lemmatize(word, lemmatizer))
+    return " ".join(new_text)
+
+
+def remove_stop_words(text: str) -> str:
+    return " ".join([word for word in text.split() if word.lower() not in ITALIAN_STOPWORDS])
+
+
+def stem_text(text: str, stemmer) -> str:
+    return stemmer.stem(text)
 
 
 def encode_vector(original_input, tokens) -> list:
@@ -67,6 +104,19 @@ def encode_vector(original_input, tokens) -> list:
     return encoded
 
 
+def convert_labels(labs: List[str]) -> dict:
+    converted = {}
+    for word in labs:
+        if word not in converted:
+            converted[word] = str(len(converted))
+    return converted
+
+
+def prepare_labels(labs: List[str], converted: dict) -> None:
+    for index in range(len(labs)):
+        labs[index] = converted[labs[index]]
+
+
 def attention_mask(input_data) -> list:
     attention = []
     for sent in input_data:
@@ -78,59 +128,22 @@ def attention_mask(input_data) -> list:
     return attention
 
 
-def prepare_dataset(inputs, labs, attentions) -> Tuple[DataLoader, DataLoader]:
-    train_inputs, validation_inputs, train_labels, validation_labels = train_test_split(inputs, labs,
-                                                                                        random_state=2018,
-                                                                                        test_size=0.1)
-    train_masks, validation_masks, _, _ = train_test_split(attentions, labs,
-                                                           random_state=2018, test_size=0.1)
+def prepare_dataset(inputs, labs, attentions) -> DataLoader:
+    train_inputs, _, train_labels, _ = train_test_split(inputs,
+                                                        labs,
+                                                        random_state=2018,
+                                                        test_size=0)
+    train_masks, _, _, _ = train_test_split(attentions, labs,
+                                                           random_state=2018, test_size=0)
 
     # Create the DataLoader for our training set.
     train_data = TensorDataset(torch.tensor(train_inputs), torch.tensor(train_masks), torch.tensor(train_labels))
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
-    # Create the DataLoader for our validation set.
-    validation_data = TensorDataset(torch.tensor(validation_inputs), torch.tensor(validation_masks),
-                                    torch.tensor(validation_labels))
-    validation_sampler = SequentialSampler(validation_data)
-    validation_dataloader = DataLoader(validation_data, sampler=validation_sampler, batch_size=batch_size)
+    return train_dataloader
 
-    return train_dataloader, validation_dataloader
-
-
-def validation(nn, validation_dataloader, dev):
-    print("")
-    print("Running Validation...")
-    t0 = time.time()
-    eval_loss, eval_accuracy = 0, 0
-    nb_eval_steps, nb_eval_examples = 0, 0
-    nn.eval()
-
-    for batch in validation_dataloader:
-        batch = tuple(t.to(dev) for t in batch)
-        b_input_ids, b_input_mask, b_labels = batch
-
-        with torch.no_grad():
-            outputs = nn(b_input_ids,
-                         token_type_ids=None,
-                         attention_mask=b_input_mask)
-
-        logits = outputs[0]
-        logits = logits.detach().cpu().numpy()
-        label_ids = b_labels.to('cpu').numpy()
-
-        tmp_eval_accuracy = flat_accuracy(logits, label_ids)
-        eval_accuracy += tmp_eval_accuracy
-
-        nb_eval_steps += 1
-
-    print("  Accuracy: {0:.2f}".format(eval_accuracy / nb_eval_steps))
-    print("  Validation took: {:}".format(format_time(time.time() - t0)))
-
-
-
-def training(nn, train_dataloader, validation_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[Any, list]:
+def training(nn, train_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[Any, list]:
     loss_values = []
     seed_val = 42
     random.seed(seed_val)
@@ -158,7 +171,7 @@ def training(nn, train_dataloader, validation_dataloader, learn_rate, eps=1e-8, 
 
         for step, batch in enumerate(train_dataloader):
             if step % 40 == 0 and not step == 0:
-                elapsed = format_time(time.time() - t0)
+                elapsed = time.time() - t0
                 print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(train_dataloader), elapsed))
 
             b_input_ids = batch[0].to(dev)
@@ -183,9 +196,7 @@ def training(nn, train_dataloader, validation_dataloader, learn_rate, eps=1e-8, 
         loss_values.append(avg_train_loss)
         print("")
         print("  Average training loss: {0:.2f}".format(avg_train_loss))
-        print("  Training epcoh took: {:}".format(format_time(time.time() - t0)))
-
-        validation(nn, validation_dataloader, device)
+        print("  Training epcoh took: {:}".format(time.time() - t0))
         print("Training Done!")
 
     return nn, loss_values
@@ -217,34 +228,7 @@ def model_testing(prediction_dataloader, dev="cuda"):
     return f1_macro_avg
 
 
-def metrics(pred_flat, labels_flat):
-    """Function to various metrics of our predictions vs labels"""
-    print(json.dumps(classification_report(labels_flat, pred_flat, output_dict=True)))
-    print("\n**** Classification report")
-    print(classification_report(labels_flat, pred_flat))
-    macro_average_accuracy = 0
-    weighted_average_accuracy = 0
-
-    for i in range(4):
-        correct_sum = 0
-        for elem1, elem2 in zip(pred_flat, labels_flat):
-            if elem1 == elem2 and elem1 == i:
-                correct_sum += 1
-
-        class_accuracy = correct_sum / len(labels_flat)
-        weighted_average_accuracy += class_accuracy * (np.sum(labels_flat == i) / len(labels_flat))
-        macro_average_accuracy += class_accuracy * 0.25
-
-        print(f"Accuracy class {i}: {class_accuracy}")
-    print(f"Macro Average accuracy class: {macro_average_accuracy}")
-    print(f"Weighted Average accuracy class: {weighted_average_accuracy}")
-    print("\n***Confusion matrix")
-    pprint.pprint(confusion_matrix(pred_flat, labels_flat))
-
-    return np.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
-
-
-def model_test_performance(test_tweets, test_labels, tokens):
+def model_test_performance(test_tweets, test_labs, tokens):
     batch = 32
     test_vector = encode_vector(test_tweets, tokens)
     test_vector = pad_sequences(test_vector, maxlen=MAX_LEN, dtype="long",
@@ -254,7 +238,7 @@ def model_test_performance(test_tweets, test_labels, tokens):
 
     prediction_inputs = torch.tensor(test_vector)
     prediction_masks = torch.tensor(test_attention_mask)
-    prediction_labels = torch.tensor(test_labels)
+    prediction_labels = torch.tensor(test_labs)
 
     prediction_data = TensorDataset(prediction_inputs, prediction_masks, prediction_labels)
     prediction_sampler = SequentialSampler(prediction_data)
@@ -263,7 +247,7 @@ def model_test_performance(test_tweets, test_labels, tokens):
     return model_testing(prediction_dataloader)
 
 
-def save_model(mod, name):
+def save_model(mod, name, tokenizer):
     output_dir = f'./model_save_{name}/'
 
     # Create output directory if needed
@@ -278,14 +262,20 @@ def save_model(mod, name):
     tokenizer.save_pretrained(output_dir)
 
 if __name__ == "__main__":
-    training_phase = False
+    training_phase = True
     MAX_LEN = 264
     batch_size = 32
     epochs = 4
     device = "cuda" if torch.cuda.is_available() else "cpu"
     num_labels = 5
-    training_dataset = ""
-    testing_dataset = ""
+    training_dataset = "dataset/train_set.csv"
+    testing_dataset = "dataset/test_set.csv"
+    
+    test = pd.read_csv(testing_dataset)
+    test_descriptions = test["Job_offer"].values
+    test_labels = list(test["Label"].values)
+    
+    converted_labels = convert_labels(test_labels)
 
     if training_phase is True:
         learning_rates = [1e-3, 5e-4, 1e-4, 5e-5, 3e-5, 2e-5]
@@ -302,129 +292,37 @@ if __name__ == "__main__":
             if device == "cuda":
                 model.cuda()
 
-            df = pd.read_csv(training_dataset, delimiter="\t", quoting=csv.QUOTE_NONE)
-            tweets = df["Tweet text"].values
-            labels = df["Label"].values
+            df = pd.read_csv(training_dataset)
+            descriptions = list(df["Job_offer"].values)
+            labels = list(df["Label"].values)
 
-            input_ids = encode_vector(tweets, token)
+            clean_texts(descriptions)
+            print("descriptions cleaned:")
+            print(descriptions)
+            prepare_labels(labels, converted_labels)
+            print("labels cleaned: ")
+            print(labels)
+            print("post clean up")
+            input()
+            input_ids = encode_vector(descriptions, token)
             input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long",
                                       value=0, truncating="post", padding="post")
 
             attention_masks = attention_mask(input_ids)
-            train_dataset, validation_dataset = prepare_dataset(input_ids, labels, attention_masks)
+            train_dataset = prepare_dataset(input_ids, labels, attention_masks)
             total_steps = len(train_dataset) * epochs
 
-            model, losses = training(model, train_dataset, validation_dataset, learn, dev=device)
-            save_model(model, str(learn))
-            plot(losses)
+            model, losses = training(model, train_dataset, learn, dev=device)
+            save_model(model, str(learn), token)
 
-            test = pd.read_csv("datasets/goldtest_TaskB/SemEval2018-T3_gold_test_taskB_emoji.txt", delimiter="\t",
-                               quoting=csv.QUOTE_NONE)
-            tweets = test["Tweet text"].values
-            labels = test["Label"].values
-
-            # Load a trained model and vocabulary that you have fine-tuned
-            model = BertForSequenceClassification.from_pretrained("model/")
-            tokenizer = BertTokenizer.from_pretrained("model/")
-            print("Model loaded")
-            # Copy the model to the GPU.
-            model.to(device)
-            f1_scores[learn] = model_test_performance(tweets, labels, tokenizer)
-
-
-    test = pd.read_csv(testing_dataset, delimiter="\t", quoting=csv.QUOTE_NONE)
-    tweets = test["Tweet text"].values
-    labels = test["Label"].values
+    clean_texts(test_descriptions)
+    prepare_labels(test_labels, converted_labels)
 
     # Load a trained model and vocabulary that you have fine-tuned
-    model = BertForSequenceClassification.from_pretrained("model/")
-    tokenizer_test = BertTokenizer.from_pretrained("model/")
-    print("Model loaded")
-    # Copy the model to the GPU.
-    model.to(device)
-    model_test_performance(tweets, labels, tokenizer_test)
-
-    # else:
-    #     print("Checking similarities")
-    #     if untrained_bert is True:
-    #         MODEL_NAME = 'bert-base-uncased'
-    #         # Use the bert tokenizer\n",
-    #
-    #     else:
-    #         MODEL_NAME = "model/"
-    #
-    #     config = BertConfig.from_pretrained(MODEL_NAME, output_hidden_states=True)
-    #     model = BertModel.from_pretrained(MODEL_NAME, config=config)
-    #     tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
-    #     test = pd.read_csv("datasets/goldtest_TaskB/SemEval2018-T3_gold_test_taskB_emoji.txt", delimiter="\t",
-    #                        quoting=csv.QUOTE_NONE)
-    #     tweets = test["Tweet text"].values
-    #     labels = test["Label"].values
-    #     sentence_vectors = []
-    #
-    #     for index in range(20):
-    #         print(f"Tweet nr. {index+1}: {tweets[index]}. Label: {labels[index]}")
-    #
-    #         tweet = tweets[index]
-    #         tokens = [tokenizer.cls_token] + tokenizer.tokenize(tweet) + [tokenizer.sep_token]
-    #         token_ids = tokenizer.convert_tokens_to_ids(tokens)
-    #         tokens_tensor = torch.tensor(token_ids).unsqueeze(0)
-    #         model.eval()  # turn off dropout layers
-    #         output = model(tokens_tensor)
-    #         layers = output.hidden_states
-    #         layer = 12
-    #         sentence_vector = layers[layer][0].detach().numpy()
-    #         sentence_vectors.append(sentence_vector[0])
-    #
-    #     similarity_matrix = cosine_similarity(np.asarray(sentence_vectors))
-    #     max_3 = []
-    #     max_3_id = []
-    #     min_3 = []
-    #     min_3_id = []
-    #     for index in range(len(similarity_matrix)):
-    #         for index2 in range(len(similarity_matrix[index])):
-    #             if index == index2:
-    #                 continue
-    #             current_tweet = similarity_matrix[index][index2]
-    #             if len(max_3) < 3:
-    #                 max_3.append(current_tweet)
-    #                 min_3.append(current_tweet)
-    #                 max_3_id.append((index+1, index2+1))
-    #                 min_3_id.append((index+1, index2+1))
-    #                 continue
-    #
-    #             if any(current_tweet > elem for elem in max_3) and (index2+1, index+1) not in max_3_id:
-    #                 lowest_elem = min(max_3)
-    #                 lowest_elem_index = max_3.index(lowest_elem)
-    #                 max_3.pop(lowest_elem_index)
-    #                 max_3.append(current_tweet)
-    #                 max_3_id.pop(lowest_elem_index)
-    #                 max_3_id.append((index+1, index2+1))
-    #
-    #             if any(current_tweet  < elem for elem in min_3) and (index2+1, index+1) not in min_3_id:
-    #                 highest_elem = max(min_3)
-    #                 highest_elem_index = min_3.index(highest_elem)
-    #                 min_3.pop(highest_elem_index)
-    #                 min_3.append(current_tweet)
-    #                 min_3_id.pop(highest_elem_index)
-    #                 min_3_id.append((index+1, index2+1))
-    #
-    #     max_3_id = max_3_id[-3:]
-    #     min_3_id = min_3_id[-3:]
-    #     print(similarity_matrix)
-    #     print(f"HIGHEST SIMILARITIES: {max_3}")
-    #     print(f"Coordinates: {max_3_id}")
-    #
-    #     print(f"LOWEST SIMILARITIES: {min_3}")
-    #     print(f"Coordinates: {min_3_id}")
-    #     # Plot a heatmap
-    #     ax = sns.heatmap(similarity_matrix, linewidth=0.5, cmap="YlGnBu")
-    #     ids = list(range(1, 20 + 1))
-    #     ax.set_xticklabels(ids)
-    #     ax.set_yticklabels(ids)
-    #
-    #     # Remove the ticks, but keep the labels
-    #     ax.tick_params(top=False, bottom=False, left=False, right=False, labelleft=True, labeltop=True,
-    #                    labelbottom=False)
-    #     ax.set_title("Similarity between sentence pairs")
-    #     plt.show()
+    if os.path.isdir("model/"):
+        model = BertForSequenceClassification.from_pretrained("model/")
+        tokenizer_test = BertTokenizer.from_pretrained("model/")
+        print("Model loaded")
+        # Copy the model to the GPU.
+        model.to(device)
+        model_test_performance(test_descriptions, test_labels, tokenizer_test)
