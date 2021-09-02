@@ -14,7 +14,6 @@ from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 import simplemma
 import nltk
-import numpy as np
 import time
 import json
 import random
@@ -39,7 +38,7 @@ def metrics(pred_flat, labels_flat):
                 correct_sum += 1
 
         class_accuracy = correct_sum / len(labels_flat)
-        weighted_average_accuracy += class_accuracy * (np.sum(labels_flat == i) / len(labels_flat))
+        weighted_average_accuracy += class_accuracy * (numpy.sum(labels_flat == i) / len(labels_flat))
         macro_average_accuracy += class_accuracy * 0.25
 
         print(f"Accuracy class {i}: {class_accuracy}")
@@ -48,14 +47,14 @@ def metrics(pred_flat, labels_flat):
     print("\n***Confusion matrix")
     pprint.pprint(confusion_matrix(pred_flat, labels_flat))
 
-    return np.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
+    return numpy.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
 
 
 def flat_accuracy(preds, labs):
     """Function to calculate the accuracy of our predictions vs labels"""
-    pred_flat = np.argmax(preds, axis=1).flatten()
+    pred_flat = numpy.argmax(preds, axis=1).flatten()
     labels_flat = labs.flatten()
-    return np.sum(pred_flat == labels_flat) / len(labels_flat)
+    return numpy.sum(pred_flat == labels_flat) / len(labels_flat)
 
 
 def clean_texts(texts: List[str]) -> None:
@@ -129,15 +128,8 @@ def attention_mask(input_data) -> list:
 
 
 def prepare_dataset(inputs, labs, attentions) -> DataLoader:
-    train_inputs, _, train_labels, _ = train_test_split(inputs,
-                                                        labs,
-                                                        random_state=2018,
-                                                        test_size=0)
-    train_masks, _, _, _ = train_test_split(attentions, labs,
-                                                           random_state=2018, test_size=0)
-
     # Create the DataLoader for our training set.
-    train_data = TensorDataset(torch.tensor(train_inputs), torch.tensor(train_masks), torch.tensor(train_labels))
+    train_data = TensorDataset(torch.tensor(inputs), torch.tensor(attentions), torch.tensor(labs))
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
@@ -147,7 +139,7 @@ def training(nn, train_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[An
     loss_values = []
     seed_val = 42
     random.seed(seed_val)
-    np.random.seed(seed_val)
+    numpy.random.seed(seed_val)
     torch.manual_seed(seed_val)
     torch.cuda.manual_seed_all(seed_val)
 
@@ -219,7 +211,7 @@ def model_testing(prediction_dataloader, dev="cuda"):
         logits = outputs[0]
         logits = logits.detach().cpu().numpy()
         label_ids = b_labels.to('cpu').numpy()
-        predictions += np.argmax(logits, axis=1).tolist()
+        predictions += numpy.argmax(logits, axis=1).tolist()
         true_labels += label_ids.tolist()
 
     _, f1_macro_avg = metrics(numpy.array(predictions), numpy.array(true_labels))
@@ -260,6 +252,7 @@ def save_model(mod, name, tokenizer):
     model_to_save = mod.module if hasattr(mod, 'module') else mod  # Take care of distributed/parallel training
     model_to_save.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
+
 
 if __name__ == "__main__":
     training_phase = True
@@ -303,7 +296,7 @@ if __name__ == "__main__":
             print("labels cleaned: ")
             print(labels)
             print("post clean up")
-            input()
+
             input_ids = encode_vector(descriptions, token)
             input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long",
                                       value=0, truncating="post", padding="post")
@@ -312,6 +305,8 @@ if __name__ == "__main__":
             train_dataset = prepare_dataset(input_ids, labels, attention_masks)
             total_steps = len(train_dataset) * epochs
 
+            print("prepared training dataset")
+            input()
             model, losses = training(model, train_dataset, learn, dev=device)
             save_model(model, str(learn), token)
 
