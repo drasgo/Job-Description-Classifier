@@ -57,23 +57,25 @@ def flat_accuracy(preds, labs):
     return numpy.sum(pred_flat == labels_flat) / len(labels_flat)
 
 
-def clean_texts(texts: List[str]) -> None:
-    for idx in range(len(texts)):
-        texts[idx] = clean_text(texts[idx])
-
-
-def clean_text(text: str) -> str:
+def clean_texts(texts: List[str], upper_limit: int=0) -> None:
     stemmer = nltk.snowball.ItalianStemmer()
+    lemmatizer = simplemma.load_data("it")
+    for idx in range(len(texts)):
+        if upper_limit != 0:
+            texts[idx] = texts[idx][:upper_limit]
+        texts[idx] = clean_text(texts[idx], stemmer, lemmatizer)
+
+
+def clean_text(text: str, stemmer, lemmatizer) -> str:
     text = text.lower()
     text = remove_stop_words(text)
-    text = lemmetize_text(text)
+    text = lemmetize_text(text, lemmatizer)
     text = stem_text(text, stemmer)
     return text
 
 
-def lemmetize_text(text: str) -> str:
+def lemmetize_text(text: str, lemmatizer) -> str:
     new_text = []
-    lemmatizer = simplemma.load_data("it")
     for word in text.split(" "):
         new_text.append(simplemma.lemmatize(word, lemmatizer))
     return " ".join(new_text)
@@ -107,7 +109,7 @@ def convert_labels(labs: List[str]) -> dict:
     converted = {}
     for word in labs:
         if word not in converted:
-            converted[word] = str(len(converted))
+            converted[word] = len(converted)
     return converted
 
 
@@ -134,6 +136,7 @@ def prepare_dataset(inputs, labs, attentions) -> DataLoader:
     train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
 
     return train_dataloader
+
 
 def training(nn, train_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[Any, list]:
     loss_values = []
@@ -220,10 +223,10 @@ def model_testing(prediction_dataloader, dev="cuda"):
     return f1_macro_avg
 
 
-def model_test_performance(test_tweets, test_labs, tokens):
+def model_test_performance(test_tweets, test_labs, tokens, max_len):
     batch = 32
     test_vector = encode_vector(test_tweets, tokens)
-    test_vector = pad_sequences(test_vector, maxlen=MAX_LEN, dtype="long",
+    test_vector = pad_sequences(test_vector[:max_len], maxlen=max_len, dtype="long",
                                 value=0, truncating="post", padding="post")
 
     test_attention_mask = attention_mask(test_vector)
@@ -239,8 +242,8 @@ def model_test_performance(test_tweets, test_labs, tokens):
     return model_testing(prediction_dataloader)
 
 
-def save_model(mod, name, tokenizer):
-    output_dir = f'./model_save_{name}/'
+def save_model(mod, tokenizer):
+    output_dir = f'./model/'
 
     # Create output directory if needed
     if not os.path.exists(output_dir):
@@ -256,68 +259,77 @@ def save_model(mod, name, tokenizer):
 
 if __name__ == "__main__":
     training_phase = True
-    MAX_LEN = 264
+
     batch_size = 32
     epochs = 4
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     num_labels = 5
+    max_post_size = 1400
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     training_dataset = "dataset/train_set.csv"
     testing_dataset = "dataset/test_set.csv"
-    
+
     test = pd.read_csv(testing_dataset)
-    test_descriptions = test["Job_offer"].values
+    test_descriptions = list(test["Job_offer"].values)
     test_labels = list(test["Label"].values)
-    
     converted_labels = convert_labels(test_labels)
+
+    df = pd.read_csv(training_dataset)
+    descriptions = list(df["Job_offer"].values)
+    labels = list(df["Label"].values)
+
+    clean_texts(test_descriptions, max_post_size)
+    prepare_labels(test_labels, converted_labels)
+
+    clean_texts(descriptions, max_post_size)
+    prepare_labels(labels, converted_labels)
 
     if training_phase is True:
         learning_rates = [1e-3, 5e-4, 1e-4, 5e-5, 3e-5, 2e-5]
-        f1_scores = {}
+
+        print("descriptions cleaned:")
+        print("labels cleaned: ")
+        print("post clean up")
+
+        token = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+        input_ids = encode_vector(descriptions, token)
+
+        print("input encoded")
+
+        input_ids = pad_sequences(input_ids, maxlen=max_post_size, dtype="long",
+                                  value=0, truncating="post", padding="post")
+        print("input padded")
+
+        attention_masks = attention_mask(input_ids)
+        train_dataset = prepare_dataset(input_ids, labels, attention_masks)
+        total_steps = len(train_dataset) * epochs
+
+        print("prepared training dataset")
+        quit()
+
         for learn in learning_rates:
             print(f"Starting training with learning rate {learn}")
-            token = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-            model = BertForSequenceClassification.from_pretrained(
-                "bert-base-uncased",  # Use the 12-layer BERT model, with an uncased vocab.
-                num_labels=num_labels,  # The number of output labels--4 for multi-class classification.
-                output_attentions=False,  # Whether the model returns attentions weights.
-                output_hidden_states=False,  # Whether the model returns all hidden-states.
-            )
-            if device == "cuda":
-                model.cuda()
 
-            df = pd.read_csv(training_dataset)
-            descriptions = list(df["Job_offer"].values)
-            labels = list(df["Label"].values)
+            # model = BertForSequenceClassification.from_pretrained(
+            #     "bert-base-uncased",  # Use the 12-layer BERT model, with an uncased vocab.
+            #     num_labels=num_labels,  # The number of output labels--4 for multi-class classification.
+            #     output_attentions=False,  # Whether the model returns attentions weights.
+            #     output_hidden_states=False,  # Whether the model returns all hidden-states.
+            # )
+            # if device == "cuda":
+            #     model.cuda()
+            model = None
 
-            clean_texts(descriptions)
-            print("descriptions cleaned:")
-            print(descriptions)
-            prepare_labels(labels, converted_labels)
-            print("labels cleaned: ")
-            print(labels)
-            print("post clean up")
-
-            input_ids = encode_vector(descriptions, token)
-            input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long",
-                                      value=0, truncating="post", padding="post")
-
-            attention_masks = attention_mask(input_ids)
-            train_dataset = prepare_dataset(input_ids, labels, attention_masks)
-            total_steps = len(train_dataset) * epochs
-
-            print("prepared training dataset")
-            input()
             model, losses = training(model, train_dataset, learn, dev=device)
-            save_model(model, str(learn), token)
+            save_model(model, token)
 
-    clean_texts(test_descriptions)
-    prepare_labels(test_labels, converted_labels)
 
     # Load a trained model and vocabulary that you have fine-tuned
     if os.path.isdir("model/"):
+
         model = BertForSequenceClassification.from_pretrained("model/")
         tokenizer_test = BertTokenizer.from_pretrained("model/")
         print("Model loaded")
         # Copy the model to the GPU.
         model.to(device)
-        model_test_performance(test_descriptions, test_labels, tokenizer_test)
+        model_test_performance(test_descriptions, test_labels, tokenizer_test, max_post_size)
