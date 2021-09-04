@@ -1,141 +1,20 @@
-from typing import Tuple, Any, List
+from typing import Tuple, Any
 import os
 
 import numpy
 import pandas as pd
 import torch
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 from transformers import BertForSequenceClassification, AdamW
 from transformers import  BertTokenizer
 from transformers import get_linear_schedule_with_warmup
 from keras.preprocessing.sequence import pad_sequences
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from sklearn.metrics import confusion_matrix
-import simplemma
-import nltk
 import time
-import json
 import random
-import pprint
 
+import text_clean_up
+import preparation
 
-ITALIAN_STOPWORDS = ['ad', 'al', 'allo', 'ai', 'agli', 'all', 'agl', 'alla', 'alle', 'con', 'col', 'coi', 'da', 'dal', 'dallo', 'dai', 'dagli', 'dall', 'dagl', 'dalla', 'dalle', 'di', 'del', 'dello', 'dei', 'degli', 'dell', 'degl', 'della', 'delle', 'in', 'nel', 'nello', 'nei', 'negli', 'nell', 'negl', 'nella', 'nelle', 'su', 'sul', 'sullo', 'sui', 'sugli', 'sull', 'sugl', 'sulla', 'sulle', 'per', 'tra', 'contro', 'io', 'tu', 'lui', 'lei', 'noi', 'voi', 'loro', 'mio', 'mia', 'miei', 'mie', 'tuo', 'tua', 'tuoi', 'tue', 'suo', 'sua', 'suoi', 'sue', 'nostro', 'nostra', 'nostri', 'nostre', 'vostro', 'vostra', 'vostri', 'vostre', 'mi', 'ti', 'ci', 'vi', 'lo', 'la', 'li', 'le', 'gli', 'ne', 'il', 'un', 'uno', 'una', 'ma', 'ed', 'se', 'perché', 'anche', 'come', 'dov', 'dove', 'che', 'chi', 'cui', 'non', 'più', 'quale', 'quanto', 'quanti', 'quanta', 'quante', 'quello', 'quelli', 'quella', 'quelle', 'questo', 'questi', 'questa', 'queste', 'si', 'tutto', 'tutti', 'a', 'c', 'e', 'i', 'l', 'o', 'ho', 'hai', 'ha', 'abbiamo', 'avete', 'hanno', 'abbia', 'abbiate', 'abbiano', 'avrò', 'avrai', 'avrà', 'avremo', 'avrete', 'avranno', 'avrei', 'avresti', 'avrebbe', 'avremmo', 'avreste', 'avrebbero', 'avevo', 'avevi', 'aveva', 'avevamo', 'avevate', 'avevano', 'ebbi', 'avesti', 'ebbe', 'avemmo', 'aveste', 'ebbero', 'avessi', 'avesse', 'avessimo', 'avessero', 'avendo', 'avuto', 'avuta', 'avuti', 'avute', 'sono', 'sei', 'è', 'siamo', 'siete', 'sia', 'siate', 'siano', 'sarò', 'sarai', 'sarà', 'saremo', 'sarete', 'saranno', 'sarei', 'saresti', 'sarebbe', 'saremmo', 'sareste', 'sarebbero', 'ero', 'eri', 'era', 'eravamo', 'eravate', 'erano', 'fui', 'fosti', 'fu', 'fummo', 'foste', 'furono', 'fossi', 'fosse', 'fossimo', 'fossero', 'essendo', 'faccio', 'fai', 'facciamo', 'fanno', 'faccia', 'facciate', 'facciano', 'farò', 'farai', 'farà', 'faremo', 'farete', 'faranno', 'farei', 'faresti', 'farebbe', 'faremmo', 'fareste', 'farebbero', 'facevo', 'facevi', 'faceva', 'facevamo', 'facevate', 'facevano', 'feci', 'facesti', 'fece', 'facemmo', 'faceste', 'fecero', 'facessi', 'facesse', 'facessimo', 'facessero', 'facendo', 'sto', 'stai', 'sta', 'stiamo', 'stanno', 'stia', 'stiate', 'stiano', 'starò', 'starai', 'starà', 'staremo', 'starete', 'staranno', 'starei', 'staresti', 'starebbe', 'staremmo', 'stareste', 'starebbero', 'stavo', 'stavi', 'stava', 'stavamo', 'stavate', 'stavano', 'stetti', 'stesti', 'stette', 'stemmo', 'steste', 'stettero', 'stessi', 'stesse', 'stessimo', 'stessero', 'stando']
-
-
-def metrics(pred_flat, labels_flat):
-    """Function to various metrics of our predictions vs labels"""
-    print(json.dumps(classification_report(labels_flat, pred_flat, output_dict=True)))
-    print("\n**** Classification report")
-    print(classification_report(labels_flat, pred_flat))
-    macro_average_accuracy = 0
-    weighted_average_accuracy = 0
-
-    for i in range(4):
-        correct_sum = 0
-        for elem1, elem2 in zip(pred_flat, labels_flat):
-            if elem1 == elem2 and elem1 == i:
-                correct_sum += 1
-
-        class_accuracy = correct_sum / len(labels_flat)
-        weighted_average_accuracy += class_accuracy * (numpy.sum(labels_flat == i) / len(labels_flat))
-        macro_average_accuracy += class_accuracy * 0.25
-
-        print(f"Accuracy class {i}: {class_accuracy}")
-    print(f"Macro Average accuracy class: {macro_average_accuracy}")
-    print(f"Weighted Average accuracy class: {weighted_average_accuracy}")
-    print("\n***Confusion matrix")
-    pprint.pprint(confusion_matrix(pred_flat, labels_flat))
-
-    return numpy.sum(pred_flat == labels_flat) / len(labels_flat), classification_report(labels_flat, pred_flat, output_dict=True)["macro avg"]["f1-score"]
-
-
-def flat_accuracy(preds, labs):
-    """Function to calculate the accuracy of our predictions vs labels"""
-    pred_flat = numpy.argmax(preds, axis=1).flatten()
-    labels_flat = labs.flatten()
-    return numpy.sum(pred_flat == labels_flat) / len(labels_flat)
-
-
-def clean_texts(texts: List[str], upper_limit: int=0) -> None:
-    stemmer = nltk.snowball.ItalianStemmer()
-    lemmatizer = simplemma.load_data("it")
-    for idx in range(len(texts)):
-        if upper_limit != 0:
-            texts[idx] = texts[idx][:upper_limit]
-        texts[idx] = clean_text(texts[idx], stemmer, lemmatizer)
-
-
-def clean_text(text: str, stemmer, lemmatizer) -> str:
-    text = text.lower()
-    text = remove_stop_words(text)
-    text = lemmetize_text(text, lemmatizer)
-    text = stem_text(text, stemmer)
-    return text
-
-
-def lemmetize_text(text: str, lemmatizer) -> str:
-    new_text = []
-    for word in text.split(" "):
-        new_text.append(simplemma.lemmatize(word, lemmatizer))
-    return " ".join(new_text)
-
-
-def remove_stop_words(text: str) -> str:
-    return " ".join([word for word in text.split() if word.lower() not in ITALIAN_STOPWORDS])
-
-
-def stem_text(text: str, stemmer) -> str:
-    return stemmer.stem(text)
-
-
-def encode_vector(original_input, tokens) -> list:
-    encoded = []
-    for phrase in original_input:
-        # `encode` will:
-        #   (1) Tokenize the sentence.
-        #   (2) Prepend the `[CLS]` token to the start.
-        #   (3) Append the `[SEP]` token to the end.
-        #   (4) Map tokens to their IDs.
-        encoded_sent = tokens.encode(
-            phrase,  # Sentence to encode.
-            add_special_tokens=True,  # Add '[CLS]' and '[SEP]'
-        )
-        encoded.append(encoded_sent)
-    return encoded
-
-
-def convert_labels(labs: List[str]) -> dict:
-    converted = {}
-    for word in labs:
-        if word not in converted:
-            converted[word] = len(converted)
-    return converted
-
-
-def prepare_labels(labs: List[str], converted: dict) -> None:
-    for index in range(len(labs)):
-        labs[index] = converted[labs[index]]
-
-
-def attention_mask(input_data) -> list:
-    attention = []
-    for sent in input_data:
-        # Create the attention mask.
-        #   - If a token ID is 0, then it's padding, set the mask to 0.
-        #   - If a token ID is > 0, then it's a real token, set the mask to 1.
-        att_mask = [int(token_id > 0) for token_id in sent]
-        attention.append(att_mask)
-    return attention
-
-
-def prepare_dataset(inputs, labs, attentions) -> DataLoader:
-    # Create the DataLoader for our training set.
-    train_data = TensorDataset(torch.tensor(inputs), torch.tensor(attentions), torch.tensor(labs))
-    train_sampler = RandomSampler(train_data)
-    train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
-
-    return train_dataloader
 
 
 def training(nn, train_dataloader, learn_rate, eps=1e-8, dev="cuda") -> Tuple[Any, list]:
@@ -217,7 +96,7 @@ def model_testing(prediction_dataloader, dev="cuda"):
         predictions += numpy.argmax(logits, axis=1).tolist()
         true_labels += label_ids.tolist()
 
-    _, f1_macro_avg = metrics(numpy.array(predictions), numpy.array(true_labels))
+    _, f1_macro_avg = preparation.metrics(numpy.array(predictions), numpy.array(true_labels))
     print(f"\n\n******\nF1 MACRO AVERAGE is: {f1_macro_avg}")
     print('    DONE.')
     return f1_macro_avg
@@ -225,11 +104,11 @@ def model_testing(prediction_dataloader, dev="cuda"):
 
 def model_test_performance(test_tweets, test_labs, tokens, max_len):
     batch = 32
-    test_vector = encode_vector(test_tweets, tokens)
-    test_vector = pad_sequences(test_vector[:max_len], maxlen=max_len, dtype="long",
+    test_vector = text_clean_up.encode_vector(test_tweets, tokens, max_len)
+    test_vector = pad_sequences(test_vector, maxlen=max_len, dtype="long",
                                 value=0, truncating="post", padding="post")
 
-    test_attention_mask = attention_mask(test_vector)
+    test_attention_mask = preparation.attention_mask(test_vector)
 
     prediction_inputs = torch.tensor(test_vector)
     prediction_masks = torch.tensor(test_attention_mask)
@@ -263,7 +142,7 @@ if __name__ == "__main__":
     batch_size = 32
     epochs = 4
     num_labels = 5
-    max_post_size = 1400
+    max_post_size = 512
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     training_dataset = "dataset/train_set.csv"
@@ -272,17 +151,17 @@ if __name__ == "__main__":
     test = pd.read_csv(testing_dataset)
     test_descriptions = list(test["Job_offer"].values)
     test_labels = list(test["Label"].values)
-    converted_labels = convert_labels(test_labels)
+    converted_labels = text_clean_up.convert_labels(test_labels)
 
     df = pd.read_csv(training_dataset)
     descriptions = list(df["Job_offer"].values)
     labels = list(df["Label"].values)
 
-    clean_texts(test_descriptions, max_post_size)
-    prepare_labels(test_labels, converted_labels)
+    text_clean_up.clean_texts(test_descriptions)
+    text_clean_up.prepare_labels(test_labels, converted_labels)
 
-    clean_texts(descriptions, max_post_size)
-    prepare_labels(labels, converted_labels)
+    text_clean_up.clean_texts(descriptions)
+    text_clean_up.prepare_labels(labels, converted_labels)
 
     if training_phase is True:
         learning_rates = [1e-3, 5e-4, 1e-4, 5e-5, 3e-5, 2e-5]
@@ -292,7 +171,7 @@ if __name__ == "__main__":
         print("post clean up")
 
         token = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-        input_ids = encode_vector(descriptions, token)
+        input_ids = text_clean_up.encode_vector(descriptions, token, max_post_size)
 
         print("input encoded")
 
@@ -300,26 +179,27 @@ if __name__ == "__main__":
                                   value=0, truncating="post", padding="post")
         print("input padded")
 
-        attention_masks = attention_mask(input_ids)
-        train_dataset = prepare_dataset(input_ids, labels, attention_masks)
+        attention_masks = preparation.attention_mask(input_ids)
+        train_dataset = preparation.prepare_dataset(input_ids, labels, attention_masks, batch_size)
         total_steps = len(train_dataset) * epochs
 
         print("prepared training dataset")
-        quit()
 
         for learn in learning_rates:
             print(f"Starting training with learning rate {learn}")
 
-            # model = BertForSequenceClassification.from_pretrained(
-            #     "bert-base-uncased",  # Use the 12-layer BERT model, with an uncased vocab.
-            #     num_labels=num_labels,  # The number of output labels--4 for multi-class classification.
-            #     output_attentions=False,  # Whether the model returns attentions weights.
-            #     output_hidden_states=False,  # Whether the model returns all hidden-states.
-            # )
-            # if device == "cuda":
-            #     model.cuda()
-            model = None
+            model = BertForSequenceClassification.from_pretrained(
+                "bert-base-uncased",  # Use the 12-layer BERT model, with an uncased vocab.
+                num_labels=num_labels,  # The number of output labels--4 for multi-class classification.
+                output_attentions=False,  # Whether the model returns attentions weights.
+                output_hidden_states=False,  # Whether the model returns all hidden-states.
+            )
+            if device == "cuda":
+                model.cuda()
+            # model = None
 
+            print("finished preprocessing")
+            quit()
             model, losses = training(model, train_dataset, learn, dev=device)
             save_model(model, token)
 
